@@ -4,7 +4,12 @@
 .venv/
 __pycache__/
 *.pyc
+.coverage
 coverage.xml
 git-metadata/
 htmlcov/
 totally_not_my_privateKeys.db
+gradebot
+LICENSE
+CSCE3550_Linux_x86_64.tar.gz
+*:Zone.Identifier
