@@ -4,11 +4,16 @@ import json
 from wsgiref.simple_server import make_server
 
 from jwks_server.config import Settings
+from jwks_server.crypto import KeyCipher
+from jwks_server.repository import Repository
 
 
 class JWKSServer:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.repository = Repository(settings.database_path, KeyCipher(settings.encryption_key))
+        self.repository.initialize()
+        self.repository.ensure_seed_keys()
 
     def __call__(self, environ, start_response):
         payload = json.dumps(
