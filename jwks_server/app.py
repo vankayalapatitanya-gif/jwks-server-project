@@ -6,10 +6,19 @@ import uuid
 from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
 
-from jwks_server.config import JWT_ISSUER, JWT_LIFETIME_SECONDS, MOCK_PASSWORD, MOCK_USERNAME, Settings
+from jwks_server.config import (
+    JWT_ISSUER,
+    JWT_LIFETIME_SECONDS,
+    MOCK_PASSWORD,
+    MOCK_USERNAME,
+    RATE_LIMIT_REQUESTS,
+    RATE_LIMIT_WINDOW_SECONDS,
+    Settings,
+)
 from jwks_server.crypto import KeyCipher, sign_jwt
 from jwks_server.repository import Repository
 from jwks_server.passwords import build_password_hasher, verify_password
+from jwks_server.rate_limit import SlidingWindowRateLimiter
 
 
 class JWKSServer:
@@ -23,6 +32,10 @@ class JWKSServer:
             username=MOCK_USERNAME,
             email=f"{MOCK_USERNAME}@test.com",
             password_hash=self.password_hasher.hash(MOCK_PASSWORD),
+        )
+        self.rate_limiter = SlidingWindowRateLimiter(
+            limit=RATE_LIMIT_REQUESTS,
+            window_seconds=RATE_LIMIT_WINDOW_SECONDS,
         )
 
     def __call__(self, environ, start_response):
@@ -51,6 +64,14 @@ class JWKSServer:
         )
 
     def _handle_auth(self, environ, start_response):
+        request_ip = self._request_ip(environ)
+        if not self.rate_limiter.allow(request_ip):
+            return self._json_response(
+                start_response,
+                429,
+                {"error": "Too many requests."},
+            )
+
         username, password = self._extract_credentials(environ)
         user = self.repository.get_user_by_username(username)
         if user is None or not verify_password(self.password_hasher, user.password_hash, password):
@@ -77,7 +98,7 @@ class JWKSServer:
             issued_at=self.repository.now(),
         )
         self.repository.update_last_login(user.id)
-        self.repository.create_auth_log(request_ip=self._request_ip(environ), user_id=user.id)
+        self.repository.create_auth_log(request_ip=request_ip, user_id=user.id)
         return self._json_response(start_response, 200, {"token": token})
 
     def _handle_register(self, environ, start_response):
@@ -169,6 +190,7 @@ class JWKSServer:
             409: "Conflict",
             404: "Not Found",
             405: "Method Not Allowed",
+            429: "Too Many Requests",
             500: "Internal Server Error",
         }
         return phrases.get(status_code, "OK")

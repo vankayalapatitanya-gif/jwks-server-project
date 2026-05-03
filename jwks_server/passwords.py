@@ -6,9 +6,9 @@ from argon2.exceptions import Argon2Error, VerifyMismatchError
 
 def build_password_hasher() -> PasswordHasher:
     return PasswordHasher(
-        time_cost=3,
-        memory_cost=65536,
-        parallelism=4,
+        time_cost=1,
+        memory_cost=512,
+        parallelism=1,
         hash_len=32,
         salt_len=16,
     )

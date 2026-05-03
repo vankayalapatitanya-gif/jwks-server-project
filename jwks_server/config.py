@@ -7,6 +7,8 @@ JWT_ISSUER = "jwks-server"
 JWT_LIFETIME_SECONDS = 300
 MOCK_USERNAME = "userABC"
 MOCK_PASSWORD = "password123"
+RATE_LIMIT_REQUESTS = 10
+RATE_LIMIT_WINDOW_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
