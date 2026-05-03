@@ -27,6 +27,16 @@ CREATE TABLE IF NOT EXISTS users(
 )
 """.strip()
 
+AUTH_LOGS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS auth_logs(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_ip TEXT NOT NULL,
+    request_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    user_id INTEGER,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+)
+""".strip()
+
 
 @dataclass(frozen=True)
 class StoredKey:
@@ -45,6 +55,14 @@ class StoredUser:
     last_login: str | None
 
 
+@dataclass(frozen=True)
+class StoredAuthLog:
+    id: int
+    request_ip: str
+    request_timestamp: str
+    user_id: int
+
+
 class Repository:
     def __init__(self, database_path: str, key_cipher: KeyCipher) -> None:
         self.database_path = Path(database_path)
@@ -54,6 +72,7 @@ class Repository:
         with self._connect() as connection:
             connection.execute(KEYS_TABLE_SQL)
             connection.execute(USERS_TABLE_SQL)
+            connection.execute(AUTH_LOGS_TABLE_SQL)
             connection.commit()
 
     def ensure_seed_keys(self) -> None:
@@ -151,6 +170,47 @@ class Repository:
             date_registered=str(row["date_registered"]),
             last_login=str(row["last_login"]) if row["last_login"] is not None else None,
         )
+
+    def update_last_login(self, user_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?",
+                (user_id,),
+            )
+            connection.commit()
+
+    def create_auth_log(self, request_ip: str, user_id: int) -> int:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO auth_logs (request_ip, user_id)
+                VALUES (?, ?)
+                """,
+                (request_ip, user_id),
+            )
+            connection.commit()
+            return int(cursor.lastrowid)
+
+    def list_auth_logs_for_user(self, user_id: int) -> list[StoredAuthLog]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, request_ip, request_timestamp, user_id
+                FROM auth_logs
+                WHERE user_id = ?
+                ORDER BY id DESC
+                """,
+                (user_id,),
+            ).fetchall()
+        return [
+            StoredAuthLog(
+                id=int(row["id"]),
+                request_ip=str(row["request_ip"]),
+                request_timestamp=str(row["request_timestamp"]),
+                user_id=int(row["user_id"]),
+            )
+            for row in rows
+        ]
 
     def now(self) -> int:
         return int(time.time())

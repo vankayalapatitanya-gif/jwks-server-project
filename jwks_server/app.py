@@ -76,6 +76,8 @@ class JWKSServer:
             expires_at=jwt_exp,
             issued_at=self.repository.now(),
         )
+        self.repository.update_last_login(user.id)
+        self.repository.create_auth_log(request_ip=self._request_ip(environ), user_id=user.id)
         return self._json_response(start_response, 200, {"token": token})
 
     def _handle_register(self, environ, start_response):
@@ -132,6 +134,12 @@ class JWKSServer:
     def _read_body(self, environ) -> bytes:
         body_length = int(environ.get("CONTENT_LENGTH") or 0)
         return environ["wsgi.input"].read(body_length) if body_length else b""
+
+    def _request_ip(self, environ) -> str:
+        forwarded_for = environ.get("HTTP_X_FORWARDED_FOR", "")
+        if forwarded_for:
+            return forwarded_for.split(",", 1)[0].strip()
+        return environ.get("REMOTE_ADDR", "127.0.0.1")
 
     def _json_response(self, start_response, status_code: int, payload: dict, headers=None):
         body = json.dumps(payload).encode("utf-8")
