@@ -2,20 +2,28 @@ from __future__ import annotations
 
 import base64
 import json
+import uuid
 from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
 
 from jwks_server.config import JWT_ISSUER, JWT_LIFETIME_SECONDS, MOCK_PASSWORD, MOCK_USERNAME, Settings
 from jwks_server.crypto import KeyCipher, sign_jwt
 from jwks_server.repository import Repository
+from jwks_server.passwords import build_password_hasher, verify_password
 
 
 class JWKSServer:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.password_hasher = build_password_hasher()
         self.repository = Repository(settings.database_path, KeyCipher(settings.encryption_key))
         self.repository.initialize()
         self.repository.ensure_seed_keys()
+        self.repository.ensure_mock_user(
+            username=MOCK_USERNAME,
+            email=f"{MOCK_USERNAME}@test.com",
+            password_hash=self.password_hasher.hash(MOCK_PASSWORD),
+        )
 
     def __call__(self, environ, start_response):
         path = environ.get("PATH_INFO", "/")
@@ -31,6 +39,11 @@ class JWKSServer:
                 return self._method_not_allowed(start_response, ["POST"])
             return self._handle_auth(environ, start_response)
 
+        if path == "/register":
+            if method != "POST":
+                return self._method_not_allowed(start_response, ["POST"])
+            return self._handle_register(environ, start_response)
+
         return self._json_response(
             start_response,
             404,
@@ -39,7 +52,8 @@ class JWKSServer:
 
     def _handle_auth(self, environ, start_response):
         username, password = self._extract_credentials(environ)
-        if username != MOCK_USERNAME or password != MOCK_PASSWORD:
+        user = self.repository.get_user_by_username(username)
+        if user is None or not verify_password(self.password_hasher, user.password_hash, password):
             return self._json_response(
                 start_response,
                 401,
@@ -64,6 +78,31 @@ class JWKSServer:
         )
         return self._json_response(start_response, 200, {"token": token})
 
+    def _handle_register(self, environ, start_response):
+        body = self._read_body(environ)
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return self._json_response(start_response, 400, {"error": "Invalid JSON body."})
+
+        username = str(payload.get("username", "")).strip()
+        email = str(payload.get("email", "")).strip()
+        if not username or not email:
+            return self._json_response(
+                start_response,
+                400,
+                {"error": "Both username and email are required."},
+            )
+
+        password = str(uuid.uuid4())
+        password_hash = self.password_hasher.hash(password)
+        try:
+            self.repository.create_user(username=username, email=email, password_hash=password_hash)
+        except ValueError as exc:
+            return self._json_response(start_response, 409, {"error": str(exc)})
+
+        return self._json_response(start_response, 201, {"password": password})
+
     def _extract_credentials(self, environ) -> tuple[str, str]:
         auth_header = environ.get("HTTP_AUTHORIZATION", "")
         if auth_header.startswith("Basic "):
@@ -74,8 +113,7 @@ class JWKSServer:
             except (ValueError, UnicodeDecodeError):
                 return "", ""
 
-        body_length = int(environ.get("CONTENT_LENGTH") or 0)
-        body = environ["wsgi.input"].read(body_length) if body_length else b""
+        body = self._read_body(environ)
         content_type = environ.get("CONTENT_TYPE", "").split(";", 1)[0].strip().lower()
 
         if content_type == "application/json":
@@ -90,6 +128,10 @@ class JWKSServer:
             return parsed.get("username", [""])[0], parsed.get("password", [""])[0]
 
         return "", ""
+
+    def _read_body(self, environ) -> bytes:
+        body_length = int(environ.get("CONTENT_LENGTH") or 0)
+        return environ["wsgi.input"].read(body_length) if body_length else b""
 
     def _json_response(self, start_response, status_code: int, payload: dict, headers=None):
         body = json.dumps(payload).encode("utf-8")
@@ -113,7 +155,10 @@ class JWKSServer:
     def _status_text(self, status_code: int) -> str:
         phrases = {
             200: "OK",
+            201: "Created",
+            400: "Bad Request",
             401: "Unauthorized",
+            409: "Conflict",
             404: "Not Found",
             405: "Method Not Allowed",
             500: "Internal Server Error",

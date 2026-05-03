@@ -16,12 +16,33 @@ CREATE TABLE IF NOT EXISTS keys(
 )
 """.strip()
 
+USERS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS users(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    email TEXT UNIQUE,
+    date_registered TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP
+)
+""".strip()
+
 
 @dataclass(frozen=True)
 class StoredKey:
     kid: int
     private_key_pem: bytes
     exp: int
+
+
+@dataclass(frozen=True)
+class StoredUser:
+    id: int
+    username: str
+    password_hash: str
+    email: str
+    date_registered: str
+    last_login: str | None
 
 
 class Repository:
@@ -32,6 +53,7 @@ class Repository:
     def initialize(self) -> None:
         with self._connect() as connection:
             connection.execute(KEYS_TABLE_SQL)
+            connection.execute(USERS_TABLE_SQL)
             connection.commit()
 
     def ensure_seed_keys(self) -> None:
@@ -89,6 +111,46 @@ class Repository:
         now = self.now()
         keys = [key for key in self.list_keys() if key.exp > now]
         return {"keys": [jwk_from_private_key_pem(key.private_key_pem, key.kid) for key in keys]}
+
+    def create_user(self, username: str, email: str, password_hash: str) -> int:
+        try:
+            with self._connect() as connection:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO users (username, password_hash, email)
+                    VALUES (?, ?, ?)
+                    """,
+                    (username, password_hash, email),
+                )
+                connection.commit()
+                return int(cursor.lastrowid)
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Username or email is already registered.") from exc
+
+    def ensure_mock_user(self, username: str, email: str, password_hash: str) -> None:
+        if self.get_user_by_username(username) is None:
+            self.create_user(username=username, email=email, password_hash=password_hash)
+
+    def get_user_by_username(self, username: str) -> StoredUser | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, username, password_hash, email, date_registered, last_login
+                FROM users
+                WHERE username = ?
+                """,
+                (username,),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredUser(
+            id=int(row["id"]),
+            username=str(row["username"]),
+            password_hash=str(row["password_hash"]),
+            email=str(row["email"]),
+            date_registered=str(row["date_registered"]),
+            last_login=str(row["last_login"]) if row["last_login"] is not None else None,
+        )
 
     def now(self) -> int:
         return int(time.time())
