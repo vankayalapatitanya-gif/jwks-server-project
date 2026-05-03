@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from jwks_server.crypto import KeyCipher, generate_private_key_pem
+from jwks_server.crypto import KeyCipher, generate_private_key_pem, jwk_from_private_key_pem
 
 
 KEYS_TABLE_SQL = """
@@ -67,6 +67,31 @@ class Repository:
             )
             for row in rows
         ]
+
+    def get_signing_key(self, expired: bool) -> StoredKey | None:
+        now = self.now()
+        comparator = "<=" if expired else ">"
+        ordering = "DESC" if expired else "ASC"
+        with self._connect() as connection:
+            row = connection.execute(
+                f"SELECT kid, key, exp FROM keys WHERE exp {comparator} ? ORDER BY exp {ordering} LIMIT 1",
+                (now,),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredKey(
+            kid=int(row["kid"]),
+            private_key_pem=self.key_cipher.decrypt(row["key"]),
+            exp=int(row["exp"]),
+        )
+
+    def build_jwks(self) -> dict[str, list[dict[str, str]]]:
+        now = self.now()
+        keys = [key for key in self.list_keys() if key.exp > now]
+        return {"keys": [jwk_from_private_key_pem(key.private_key_pem, key.kid) for key in keys]}
+
+    def now(self) -> int:
+        return int(time.time())
 
     def _count_keys(self, query: str, params: tuple[object, ...]) -> int:
         with self._connect() as connection:

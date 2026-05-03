@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+from typing import Any
 from dataclasses import dataclass
 
+import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -35,6 +37,28 @@ def jwk_from_private_key_pem(private_key_pem: bytes, kid: int) -> dict[str, str]
         "n": _base64url_uint(public_numbers.n),
         "use": "sig",
     }
+
+
+def sign_jwt(
+    private_key_pem: bytes,
+    kid: int,
+    issuer: str,
+    subject: str,
+    expires_at: int,
+    issued_at: int,
+) -> str:
+    payload: dict[str, Any] = {
+        "exp": expires_at,
+        "iat": issued_at,
+        "iss": issuer,
+        "sub": subject,
+    }
+    return jwt.encode(
+        payload,
+        private_key_pem.decode("utf-8"),
+        algorithm="RS256",
+        headers={"kid": str(kid)},
+    )
 
 
 @dataclass(frozen=True)

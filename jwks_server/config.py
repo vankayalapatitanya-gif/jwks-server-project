@@ -3,6 +3,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+JWT_ISSUER = "jwks-server"
+JWT_LIFETIME_SECONDS = 300
+MOCK_USERNAME = "userABC"
+MOCK_PASSWORD = "password123"
+
 
 @dataclass(frozen=True)
 class Settings:
