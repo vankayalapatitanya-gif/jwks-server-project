@@ -1,0 +1,10 @@
+.agents/
+.codex/
+.pytest_cache/
+.venv/
+__pycache__/
+*.pyc
+coverage.xml
+git-metadata/
+htmlcov/
+totally_not_my_privateKeys.db
